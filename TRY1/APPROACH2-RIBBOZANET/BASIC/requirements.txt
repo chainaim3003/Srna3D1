@@ -1,0 +1,19 @@
+# Core ML
+torch>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Config & CLI
+pyyaml>=6.0
+argparse
+
+# Data
+pandas>=2.0.0
+biopython>=1.81
+
+# Logging
+tqdm>=4.65.0
+
+# Optional: multimolecule wrapper for RibonanzaNet
+# Uncomment if using backbone.source="multimolecule" in config.yaml
+# multimolecule>=0.0.1
