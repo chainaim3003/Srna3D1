@@ -61,7 +61,7 @@ data:
 
 # --- Training ---
 training:
-  epochs: 35
+  epochs: 50
   batch_size: 4             # Small due to N^2 memory for pairwise
   learning_rate: 0.0001     # 1e-4
   weight_decay: 0.01
