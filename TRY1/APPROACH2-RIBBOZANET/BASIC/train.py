@@ -3,6 +3,8 @@ train.py — Training loop for the Distance Matrix prediction head.
 
 Usage:
     python train.py --config config.yaml
+    python train.py --config config.yaml --resume checkpoints/best_model.pt
+    python train.py --config config.yaml --resume checkpoints/model_epoch10.pt
 
 What this trains:
     ONLY the DistanceMatrixHead (small MLP on pairwise features).
@@ -42,11 +44,14 @@ from losses.distance_loss import DistanceMatrixLoss
 from losses.constraint_loss import BondConstraintLoss, ClashPenaltyLoss
 
 
-def train(config: dict):
+def train(config: dict, resume_path: str = None):
     """Main training function.
 
     Args:
         config: Configuration dictionary loaded from config.yaml.
+        resume_path: Path to checkpoint to resume from. If provided,
+                     loads model weights, optimizer state, scheduler state,
+                     and continues from the saved epoch.
     """
     # ---- Setup ----
     train_cfg = config['training']
@@ -123,6 +128,8 @@ def train(config: dict):
     w_clash = loss_weights.get('clash_penalty', 0.05)
 
     # ---- Optimizer & scheduler ----
+    epochs = train_cfg.get('epochs', 100)
+
     optimizer = optim.AdamW(
         distance_head.parameters(),
         lr=train_cfg.get('learning_rate', 1e-4),
@@ -131,7 +138,7 @@ def train(config: dict):
 
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=train_cfg.get('epochs', 100),
+        T_max=epochs,
     )
 
     # Mixed precision
@@ -145,16 +152,71 @@ def train(config: dict):
 
     best_val_loss = float('inf')
     best_epoch = -1
+    start_epoch = 1
+
+    # ---- Resume from checkpoint ----
+    if resume_path and os.path.exists(resume_path):
+        print(f"\n--- Resuming from {resume_path} ---")
+        checkpoint = torch.load(resume_path, map_location=device, weights_only=False)
+
+        # Load model weights
+        if 'model_state_dict' in checkpoint:
+            distance_head.load_state_dict(checkpoint['model_state_dict'])
+            print(f"  Loaded model weights")
+        else:
+            distance_head.load_state_dict(checkpoint)
+            print(f"  Loaded model weights (raw state dict)")
+
+        # Load optimizer state (for correct momentum/adam state)
+        if 'optimizer_state_dict' in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            print(f"  Loaded optimizer state")
+
+        # Load scheduler state
+        if 'scheduler_state_dict' in checkpoint:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            print(f"  Loaded scheduler state")
+        elif 'epoch' in checkpoint:
+            # If no scheduler state saved, step scheduler to catch up
+            for _ in range(checkpoint['epoch']):
+                scheduler.step()
+            print(f"  Fast-forwarded scheduler to epoch {checkpoint['epoch']}")
+
+        # Load scaler state (for mixed precision)
+        if 'scaler_state_dict' in checkpoint:
+            scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            print(f"  Loaded scaler state")
+
+        # Resume from next epoch
+        if 'epoch' in checkpoint:
+            start_epoch = checkpoint['epoch'] + 1
+            print(f"  Resuming from epoch {start_epoch}")
+
+        # Restore best val loss tracking
+        if 'val_loss' in checkpoint:
+            best_val_loss = checkpoint['val_loss']
+            best_epoch = checkpoint.get('epoch', -1)
+            print(f"  Best val loss so far: {best_val_loss:.4f} (epoch {best_epoch})")
+
+        # If best_val_loss was saved separately (from best_model.pt)
+        if 'best_val_loss' in checkpoint:
+            best_val_loss = checkpoint['best_val_loss']
+            best_epoch = checkpoint.get('best_epoch', best_epoch)
+
+        print(f"  Will train epochs {start_epoch} → {epochs}")
+
+    elif resume_path:
+        print(f"\n  WARNING: Resume path not found: {resume_path}")
+        print(f"  Starting training from scratch.")
 
     # ---- Training loop ----
-    epochs = train_cfg.get('epochs', 100)
     grad_clip = train_cfg.get('gradient_clip', 1.0)
 
-    print(f"\n--- Training for {epochs} epochs ---")
+    print(f"\n--- Training epochs {start_epoch} → {epochs} ---")
     print(f"Loss weights: dist={w_dist}, bond={w_bond}, clash={w_clash}")
     print(f"FP16: {use_fp16}, Grad clip: {grad_clip}")
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch, epochs + 1):
         epoch_start = time.time()
 
         # ---- Train phase ----
@@ -244,19 +306,43 @@ def train(config: dict):
                 'epoch': epoch,
                 'model_state_dict': distance_head.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'scaler_state_dict': scaler.state_dict(),
                 'val_loss': avg_val_loss,
+                'best_val_loss': best_val_loss,
+                'best_epoch': best_epoch,
                 'config': config,
             }, save_path)
-            print(f"  ✓ New best model saved (val_loss={avg_val_loss:.4f})")
+            print(f"  New best model saved (val_loss={avg_val_loss:.4f})")
 
-        # ---- Periodic save ----
+        # ---- Periodic save (always save latest for resume) ----
         if epoch % save_every == 0:
             save_path = os.path.join(save_dir, f"model_epoch{epoch}.pt")
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': distance_head.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'scaler_state_dict': scaler.state_dict(),
                 'val_loss': avg_val_loss,
+                'best_val_loss': best_val_loss,
+                'best_epoch': best_epoch,
+                'config': config,
             }, save_path)
+
+        # ---- Always save latest (for resume after Ctrl+C) ----
+        save_path = os.path.join(save_dir, "latest_model.pt")
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': distance_head.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'scaler_state_dict': scaler.state_dict(),
+            'val_loss': avg_val_loss,
+            'best_val_loss': best_val_loss,
+            'best_epoch': best_epoch,
+            'config': config,
+        }, save_path)
 
     print(f"\n--- Training complete ---")
     print(f"Best validation loss: {best_val_loss:.4f} at epoch {best_epoch}")
@@ -267,13 +353,17 @@ def main():
     parser = argparse.ArgumentParser(description="Train Distance Matrix Head")
     parser.add_argument("--config", type=str, default="config.yaml",
                         help="Path to config YAML file")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to checkpoint to resume training from. "
+                             "Loads model, optimizer, scheduler, and epoch number. "
+                             "Example: --resume checkpoints/latest_model.pt")
     args = parser.parse_args()
 
     # Load config
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    train(config)
+    train(config, resume_path=args.resume)
 
 
 if __name__ == "__main__":

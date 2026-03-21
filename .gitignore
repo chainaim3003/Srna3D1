@@ -1,0 +1,14 @@
+# Cloned repos (download separately)
+RibonanzaNet/
+Ranger-Deep-Learning-Optimizer/
+
+# Large data files (download from Kaggle)
+ribonanza-weights/
+stanford3d-pickle/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Temporary files
+*.log

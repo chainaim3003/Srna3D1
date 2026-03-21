@@ -3,6 +3,8 @@
 # ============================================================
 # All hyperparameters in one place. No magic numbers in code.
 # ============================================================
+# PATHS UPDATED: 2026-03-20 based on actual filesystem layout
+# ============================================================
 
 # --- Backbone ---
 backbone:
@@ -10,16 +12,19 @@ backbone:
   # "multimolecule" = use pip install multimolecule
   source: "official"
 
-  # Path to the cloned RibonanzaNet repo (only needed if source=official)
+  # Path to the cloned RibonanzaNet repo
+  # Actual location: Srna3D1/RibonanzaNet/
   repo_path: "../../../RibonanzaNet"
 
   # Path to pretrained weights file
-  # Download from: https://www.kaggle.com/datasets/shujun717/ribonanzanet-weights
-  weights_path: "../../../ribonanzanet_weights/best_model.pt"
+  # Actual file: Srna3D1/ribonanza-weights/RibonanzaNet.pt
+  # Other files in that folder (RibonanzaNet-Deg.pt, -Drop.pt, -SS.pt)
+  # are fine-tuned variants for other tasks — we use the BASE model.
+  weights_path: "../../../ribonanza-weights/RibonanzaNet.pt"
 
   # These must match the pretrained model's config
-  # From official RibonanzaNet config.yaml:
-  ntoken: 5             # A=0, U=1, G=2, C=3, pad=4
+  # From official RibonanzaNet configs/pairwise.yaml:
+  ntoken: 5             # A=0, C=1, G=2, U=3, pad=4
   ninp: 256             # Embedding / hidden dimension
   pairwise_dimension: 64  # Pairwise feature dimension
 
@@ -28,8 +33,6 @@ backbone:
 # --- Distance Head ---
 distance_head:
   # Input: pairwise representation (B, N, N, pairwise_dim)
-  # If pairwise repr not available, we build it from single repr
-  # In that case input_dim = ninp * 2 + rel_pos_dim
   hidden_dim: 128
   num_layers: 3         # Number of linear layers in the MLP
   dropout: 0.1
@@ -39,27 +42,26 @@ reconstruction:
   method: "mds_then_refine"   # "mds_only" or "mds_then_refine"
   refine_steps: 100           # Gradient descent steps after MDS
   refine_lr: 0.01             # Learning rate for refinement
-  # Bond length constraint during refinement
   target_consecutive_dist: 5.9  # Typical C1'-C1' distance in Angstroms
 
 # --- Data ---
 data:
-  # Path to pre-processed pickle from:
-  # https://www.kaggle.com/datasets/shujun717/stanford3d-dataprocessing-pickle
-  train_pickle_path: null   # Set this to your pickle path
+  # Actual file: Srna3D1/stanford3d-pickle/pdb_xyz_data.pkl
+  train_pickle_path: "../../../stanford3d-pickle/pdb_xyz_data.pkl"
 
-  # OR: path to directory with CIF files for extracting training structures
-  cif_dir: null             # e.g. "../../../PDB files-20260302T033106Z-1-001/PDB_Files"
+  # OR: path to directory with CIF files (not needed if pickle works)
+  cif_dir: null
 
   # Competition test sequences
-  test_csv_path: "../../../stanford-rna-3d-folding-2/test_sequences.csv"
+  # Actual file: Srna3D1/TRY1/APPROACH1-TEMPLATE/test_sequences (1).csv
+  test_csv_path: "../../APPROACH1-TEMPLATE/test_sequences (1).csv"
 
   max_seq_len: 256          # Cap sequence length (pairwise repr is N^2)
   val_fraction: 0.1         # Fraction of training data for validation
 
 # --- Training ---
 training:
-  epochs: 100
+  epochs: 35
   batch_size: 4             # Small due to N^2 memory for pairwise
   learning_rate: 0.0001     # 1e-4
   weight_decay: 0.01
@@ -82,4 +84,4 @@ training:
 prediction:
   num_predictions: 5        # Competition requires 5 predictions per target
   noise_scale: 0.5          # Noise added to distances for diversity (Angstroms)
-  refine_steps_range: [50, 75, 100, 125, 150]  # Different refinement steps per prediction
+  refine_steps_range: [50, 75, 100, 125, 150]

@@ -97,43 +97,93 @@ def format_submission(
 def load_test_sequences(csv_path: str) -> List[Dict]:
     """Load test sequences from competition CSV.
 
-    The test_sequences.csv has columns: target_id, sequence
-    (and possibly others like sequence_length, temporal_cutoff, etc.)
+    VERIFIED FORMAT of test_sequences.csv:
+      Columns: target_id, sequence, temporal_cutoff, description,
+               stoichiometry, all_sequences, ligand_ids, ligand_SMILES
 
-    Args:
-        csv_path: Path to test_sequences.csv
+      - target_id: e.g. "8ZNQ"
+      - sequence: the actual RNA bases, e.g. "ACCGUGACGGGCCUUUUGGCUAUACGCGGU"
+      - all_sequences: FASTA-formatted with HEADER, e.g.
+            ">8ZNQ_1|Chain A[auth A]|RNA (30-MER)\nACCGUGACGGGCCUUUUGGCUAUACGCGGU"
 
-    Returns:
-        List of dicts with 'target_id' and 'sequence' keys.
+    IMPORTANT: We must use the 'sequence' column, NOT 'all_sequences'.
+    The all_sequences column includes FASTA headers like ">8ZNQ_1|Chain A..."
+    which would be read character-by-character as residue names.
     """
     df = pd.read_csv(csv_path)
 
-    # The column names may vary slightly
-    id_col = None
-    seq_col = None
+    print(f"Test CSV columns: {list(df.columns)}")
+    print(f"Test CSV shape: {df.shape}")
 
+    # ============================================================
+    # Find the target_id column
+    # ============================================================
+    id_col = None
     for col in df.columns:
-        col_lower = col.lower()
-        if 'target' in col_lower and 'id' in col_lower:
+        col_lower = col.lower().strip()
+        if col_lower == 'target_id':
             id_col = col
-        elif col_lower == 'id' and id_col is None:
+            break
+        elif col_lower == 'id':
             id_col = col
-        elif 'seq' in col_lower and 'len' not in col_lower:
-            seq_col = col
+            # Don't break — keep looking for exact 'target_id' match
 
     if id_col is None:
-        # Fallback: first column is ID
         id_col = df.columns[0]
+        print(f"  Warning: No target_id column found, using first column: '{id_col}'")
+
+    # ============================================================
+    # Find the sequence column — MUST be exact 'sequence', NOT 'all_sequences'
+    # The all_sequences column has FASTA headers that break everything.
+    # ============================================================
+    seq_col = None
+    for col in df.columns:
+        col_lower = col.lower().strip()
+        if col_lower == 'sequence':
+            seq_col = col
+            break  # Exact match — stop immediately
+
     if seq_col is None:
-        # Fallback: second column is sequence
+        # Fallback: look for column with 'seq' but not 'all_seq'
+        for col in df.columns:
+            col_lower = col.lower().strip()
+            if 'seq' in col_lower and 'all' not in col_lower and 'len' not in col_lower:
+                seq_col = col
+                break
+
+    if seq_col is None:
         seq_col = df.columns[1]
+        print(f"  Warning: No sequence column found, using second column: '{seq_col}'")
+
+    print(f"  Using ID column: '{id_col}', Sequence column: '{seq_col}'")
 
     sequences = []
     for _, row in df.iterrows():
+        target_id = str(row[id_col]).strip()
+        sequence = str(row[seq_col]).strip()
+
+        # Validate: sequence should only contain RNA bases
+        valid_bases = set('AUGCaugcNn')
+        if not all(c in valid_bases for c in sequence):
+            # Filter to only valid RNA characters
+            filtered = ''.join(c for c in sequence if c.upper() in 'AUGCN')
+            if len(filtered) > 0:
+                print(f"  Warning: {target_id} sequence had non-RNA chars, filtered {len(sequence)} → {len(filtered)}")
+                sequence = filtered
+            else:
+                print(f"  Warning: {target_id} has no valid RNA bases in sequence column!")
+                continue
+
         sequences.append({
-            'target_id': str(row[id_col]),
-            'sequence': str(row[seq_col]),
+            'target_id': target_id,
+            'sequence': sequence.upper(),
         })
 
-    print(f"Loaded {len(sequences)} test sequences from {csv_path}")
+    print(f"Loaded {len(sequences)} test sequences")
+
+    # Show first sequence as sanity check
+    if sequences:
+        s = sequences[0]
+        print(f"  First: {s['target_id']} — {s['sequence'][:40]}... (len={len(s['sequence'])})")
+
     return sequences
