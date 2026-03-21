@@ -40,12 +40,6 @@ class RNAStructureDataset(Dataset):
         max_seq_len: int = 256,
         augment: bool = True,
     ):
-        """
-        Args:
-            data: List of dicts with keys 'sequence' (str) and 'coords' (np.ndarray (N,3))
-            max_seq_len: Maximum sequence length. Longer sequences are truncated.
-            augment: Whether to apply random rotation/translation to coordinates.
-        """
         self.data = data
         self.max_seq_len = max_seq_len
         self.augment = augment
@@ -64,13 +58,11 @@ class RNAStructureDataset(Dataset):
         coords = coords[:seq_len]
 
         # Data augmentation: random rotation and translation
-        # This teaches the model that structure doesn't depend on orientation
         if self.augment:
             coords = random_rotation(coords)
             coords = random_translation(coords, scale=10.0)
 
         # Compute ground truth distance matrix from coordinates
-        # scipy.spatial.distance.cdist would also work
         diff = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]  # (N, N, 3)
         distance_matrix = np.sqrt((diff ** 2).sum(axis=-1))  # (N, N)
 
@@ -98,14 +90,19 @@ class RNAStructureDataset(Dataset):
 def load_from_pickle(pickle_path: str) -> List[Dict]:
     """Load pre-processed training data from pickle.
 
-    The pickle from https://www.kaggle.com/datasets/shujun717/stanford3d-dataprocessing-pickle
-    contains processed RNA structures with sequences and coordinates.
-
-    Args:
-        pickle_path: Path to the pickle file.
-
-    Returns:
-        List of dicts with 'sequence' and 'coords' keys.
+    VERIFIED FORMAT of pdb_xyz_data.pkl (from stanford3d-dataprocessing-pickle):
+        {
+            'sequence': list of 844 RNA sequence strings,
+            'xyz': list of 844 items, where each item is a LIST of defaultdicts,
+                   one defaultdict per nucleotide, with keys:
+                     'phosphate':  np.array of shape (5, 3) — phosphate group atoms
+                     'sugar_ring': np.array of shape (6, 3) — sugar ring atoms
+                     'base':       np.array of shape (N, 3) — base atoms (varies)
+                   C1' atom = sugar_ring[0] (first atom of sugar ring)
+            'publication_date': list of 844 date strings,
+            'filtered_cif_files': list of 844 CIF filenames,
+            'cluster': pandas Series of 844 cluster IDs
+        }
     """
     if not os.path.exists(pickle_path):
         raise FileNotFoundError(
@@ -116,73 +113,129 @@ def load_from_pickle(pickle_path: str) -> List[Dict]:
     with open(pickle_path, 'rb') as f:
         raw_data = pickle.load(f)
 
-    # The pickle format may vary — adapt this parsing based on actual content.
-    # Expected: list of dicts or similar structure with sequence + coordinate data.
-    # We handle common formats:
-
     processed = []
 
-    if isinstance(raw_data, list):
+    # ============================================================
+    # FORMAT: Dict with 'sequence' and 'xyz' as parallel lists
+    # xyz[i] = list of defaultdicts (one per nucleotide)
+    # Each defaultdict has 'phosphate', 'sugar_ring', 'base' arrays
+    # C1' = sugar_ring[0] (first atom of sugar ring)
+    # ============================================================
+    if isinstance(raw_data, dict) and 'sequence' in raw_data and 'xyz' in raw_data:
+        sequences = raw_data['sequence']
+        xyz_list = raw_data['xyz']
+        n = len(sequences)
+        print(f"Pickle format: dict with {n} structures")
+        print(f"  Keys: {list(raw_data.keys())}")
+
+        skipped_nan = 0
+        skipped_short = 0
+        skipped_error = 0
+
+        for i in range(n):
+            try:
+                seq = sequences[i]
+                residue_list = xyz_list[i]  # List of defaultdicts, one per nucleotide
+
+                if seq is None or residue_list is None:
+                    skipped_error += 1
+                    continue
+
+                # Extract C1' coordinate from each nucleotide
+                # C1' is the first atom in the sugar_ring group
+                c1_coords = []
+                valid_bases = []
+
+                for j, residue_atoms in enumerate(residue_list):
+                    if not hasattr(residue_atoms, 'keys') or 'sugar_ring' not in residue_atoms:
+                        # Skip residues without sugar_ring data
+                        continue
+
+                    sugar_ring = residue_atoms['sugar_ring']
+                    if sugar_ring is None or len(sugar_ring) == 0:
+                        continue
+
+                    # C1' = first atom of sugar_ring
+                    c1_prime = sugar_ring[0]  # shape (3,)
+
+                    # Check for NaN
+                    if np.isnan(c1_prime).any():
+                        continue
+
+                    c1_coords.append(c1_prime)
+                    if j < len(seq):
+                        valid_bases.append(seq[j])
+
+                if len(c1_coords) < 10:
+                    skipped_short += 1
+                    continue
+
+                coords = np.array(c1_coords, dtype=np.float32)  # (N, 3)
+                clean_seq = ''.join(valid_bases[:len(c1_coords)])
+
+                # Final length check
+                min_len = min(len(clean_seq), coords.shape[0])
+                clean_seq = clean_seq[:min_len]
+                coords = coords[:min_len]
+
+                if min_len < 10:
+                    skipped_short += 1
+                    continue
+
+                processed.append({'sequence': clean_seq, 'coords': coords})
+
+            except Exception as e:
+                skipped_error += 1
+                if skipped_error <= 3:
+                    print(f"  Warning: Error on structure {i}: {e}")
+
+        print(f"  Parsed: {len(processed)} structures")
+        print(f"  Skipped: {skipped_short} too short, {skipped_nan} NaN, {skipped_error} errors")
+
+    # ============================================================
+    # FALLBACK: List of dicts (alternative format)
+    # ============================================================
+    elif isinstance(raw_data, list):
+        print(f"Pickle format: list of {len(raw_data)} items")
         for entry in raw_data:
             if isinstance(entry, dict):
                 seq = entry.get('sequence', entry.get('seq', ''))
                 coords = entry.get('coords', entry.get('xyz', None))
                 if seq and coords is not None:
                     coords = np.array(coords, dtype=np.float32)
-                    if len(seq) == coords.shape[0] and coords.shape[1] == 3:
+                    if coords.ndim == 2 and coords.shape[1] == 3 and len(seq) >= 10:
                         processed.append({'sequence': seq, 'coords': coords})
 
-    elif isinstance(raw_data, dict):
-        # Could be a dict mapping IDs to structures
-        for key, entry in raw_data.items():
-            if isinstance(entry, dict):
-                seq = entry.get('sequence', entry.get('seq', ''))
-                coords = entry.get('coords', entry.get('xyz', None))
-                if seq and coords is not None:
-                    coords = np.array(coords, dtype=np.float32)
-                    if len(seq) == coords.shape[0] and coords.shape[1] == 3:
-                        processed.append({'sequence': seq, 'coords': coords})
+    else:
+        print(f"WARNING: Unrecognized pickle format: {type(raw_data)}")
+        if isinstance(raw_data, dict):
+            print(f"  Keys: {list(raw_data.keys())}")
 
     print(f"Loaded {len(processed)} structures from pickle")
 
     if len(processed) == 0:
         print(
             "WARNING: No structures parsed from pickle. "
-            "The pickle format may differ from expected. "
-            "Inspect the pickle contents manually: "
-            "  import pickle; data = pickle.load(open(path, 'rb')); print(type(data), len(data))"
+            "Inspect the pickle contents manually:\n"
+            "  import pickle\n"
+            "  data = pickle.load(open(path, 'rb'))\n"
+            "  print(type(data))\n"
+            "  if isinstance(data, dict): print(list(data.keys()))"
         )
 
     return processed
 
 
 def load_from_cif_directory(cif_dir: str) -> List[Dict]:
-    """Load training data by parsing CIF files with BioPython.
-
-    Extracts C1' atom coordinates from each RNA chain.
-
-    Args:
-        cif_dir: Path to directory containing .cif files.
-
-    Returns:
-        List of dicts with 'sequence' and 'coords' keys.
-    """
+    """Load training data by parsing CIF files with BioPython."""
     from utils.pdb_parser import extract_rna_structures_from_directory
     return extract_rna_structures_from_directory(cif_dir)
 
 
 def load_training_data(config: dict) -> Tuple[List[Dict], List[Dict]]:
-    """Load and split training data based on config.
-
-    Args:
-        config: Full config dictionary.
-
-    Returns:
-        (train_data, val_data) — lists of dicts with 'sequence' and 'coords'
-    """
+    """Load and split training data based on config."""
     data_cfg = config['data']
 
-    # Try pickle first, then CIF directory
     all_data = []
 
     if data_cfg.get('train_pickle_path'):
