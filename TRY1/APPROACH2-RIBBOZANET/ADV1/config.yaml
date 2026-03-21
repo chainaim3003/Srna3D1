@@ -1,0 +1,105 @@
+# ============================================================
+# ADV1-Run1 — Configuration
+# ============================================================
+# MODIFIED from BASIC config.yaml:
+#   - backbone.freeze: false (selective unfreezing)
+#   - backbone.freeze_first_n: 7 (freeze layers 0-6, unfreeze 7-8)
+#   - NEW template section
+#   - training: discriminative LR, warmup, gradient accumulation
+#   - training.basic_checkpoint: warm-start from BASIC
+# ============================================================
+
+# --- Backbone --- (CHANGED from BASIC)
+backbone:
+  source: "official"
+  repo_path: "../../../RibonanzaNet"
+  weights_path: "../../../ribonanza-weights/RibonanzaNet.pt"
+  ntoken: 5
+  ninp: 256
+  pairwise_dimension: 64
+
+  # ADV1: Selective unfreezing
+  # BASIC had: freeze: true
+  freeze: false
+  freeze_first_n: 7       # Freeze layers 0-6, unfreeze layers 7-8
+
+# --- Template --- (ENTIRELY NEW)
+template:
+  enabled: true
+
+  # Path to Approach 1 submission.csv (template coordinates for test targets)
+  # UPDATE THIS after running Approach 1 on Kaggle
+  test_template_csv: "../../APPROACH1-TEMPLATE/results/mine/submission.csv"
+
+  # Path to Result.txt (MMseqs2 hits — for confidence scores)
+  # UPDATE THIS after running Approach 1 on Kaggle
+  result_txt: "../../APPROACH1-TEMPLATE/results/mine/Result.txt"
+
+  # Template encoder settings
+  template_dim: 16           # Output feature dimension
+  num_distance_bins: 22      # 21 distance bins + 1 no_template bin
+  confidence_scale: 15.0     # E-value normalization: -log10(evalue) / scale
+  gap_penalty: 0.3           # Confidence multiplier for gap-filled residues
+
+# --- Distance Head --- (input dim computed from pairwise_dimension + template_dim)
+distance_head:
+  hidden_dim: 128
+  num_layers: 3
+  dropout: 0.1
+
+# --- 3D Reconstruction --- (SAME as BASIC)
+reconstruction:
+  method: "mds_then_refine"
+  refine_steps: 100
+  refine_lr: 0.01
+  target_consecutive_dist: 5.9
+
+# --- Data --- (SAME as BASIC)
+data:
+  train_pickle_path: "../../../stanford3d-pickle/pdb_xyz_data.pkl"
+  cif_dir: null
+  test_csv_path: "../../APPROACH1-TEMPLATE/test_sequences (1).csv"
+  max_seq_len: 256
+  val_fraction: 0.1
+
+# --- Training --- (CHANGED from BASIC)
+training:
+  epochs: 50
+  batch_size: 4
+
+  # ADV1: Discriminative learning rates
+  # BASIC had: learning_rate: 0.0001 (single LR for distance head only)
+  learning_rate_backbone: 0.00001   # 1e-5 for unfrozen backbone layers (cautious)
+  learning_rate_head: 0.0001        # 1e-4 for distance head + template encoder
+
+  # ADV1: LR warmup
+  warmup_fraction: 0.05             # 5% of epochs → 2-3 warmup epochs
+
+  # ADV1: Gradient accumulation
+  gradient_accumulation_steps: 4    # Effective batch size = 4 × 4 = 16
+
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  use_fp16: true
+  num_workers: 0                    # 0 is faster on Windows (avoids spawn overhead)
+  seed: 42
+
+  # Loss weights (SAME as BASIC)
+  loss_weights:
+    distance_mse: 1.0
+    bond_constraint: 0.1
+    clash_penalty: 0.05
+
+  # Checkpointing
+  save_dir: "./checkpoints"
+  save_every: 10
+
+  # BASIC checkpoint for warm-start (partial weight transfer)
+  # Set to null if not warm-starting from BASIC
+  basic_checkpoint: "../BASIC/checkpoints/best_model.pt"
+
+# --- Prediction --- (SAME as BASIC)
+prediction:
+  num_predictions: 5
+  noise_scale: 0.5
+  refine_steps_range: [50, 75, 100, 125, 150]

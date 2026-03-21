@@ -1,0 +1,10 @@
+torch>=2.0.0
+pyyaml
+numpy
+scipy
+pandas
+biopython
+tqdm
+einops
+matplotlib
+polars
