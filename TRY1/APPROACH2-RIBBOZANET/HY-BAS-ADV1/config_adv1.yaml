@@ -1,0 +1,81 @@
+# ============================================================
+# HY-BAS-ADV1 — Configuration
+# ============================================================
+# ADV1 = BASIC + template features from Approach 1
+# Difference from BASIC: pair_dim is 80 (64 pairwise + 16 template)
+# ============================================================
+
+# --- Backbone (UNCHANGED from BASIC) ---
+backbone:
+  source: "official"
+  repo_path: "../../../../RibonanzaNet"
+  weights_path: "../../../../ribonanza-weights/RibonanzaNet.pt"
+  ntoken: 5
+  ninp: 256
+  pairwise_dimension: 64    # RibonanzaNet outputs 64 pairwise features
+  freeze: true
+
+# --- Template Encoder (NEW in ADV1) ---
+template:
+  template_dim: 16          # Template features per pair
+  num_bins: 22              # Distance bins for template encoding
+  max_dist: 40.0            # Max distance in Angstroms for binning
+
+  # For local training/testing: path to Approach 1 outputs
+  local_submission_csv: "../../APPROACH1-TEMPLATE/mine/kalai/run1/submission_kalai.csv"
+  local_result_txt: "../../APPROACH1-TEMPLATE/mine/kalai/run1/Result_20260321_1100_UTC_kalai.txt.txt"
+
+  # For Kaggle: directory where MMseqs2 outputs are written
+  kaggle_template_dir: "/kaggle/working/templates"
+
+# --- Distance Head (MODIFIED: pair_dim changes from 64 to 80) ---
+distance_head:
+  pair_dim: 80              # 64 (backbone pairwise) + 16 (template) = 80
+  hidden_dim: 128
+  num_layers: 3
+  dropout: 0.1
+
+# --- 3D Reconstruction (UNCHANGED from BASIC) ---
+reconstruction:
+  method: "mds_then_refine"
+  refine_steps: 100
+  refine_lr: 0.01
+  target_consecutive_dist: 5.9
+
+# --- Data (UNCHANGED from BASIC) ---
+data:
+  train_pickle_path: "../../../../stanford3d-pickle/pdb_xyz_data.pkl"
+  cif_dir: null
+  test_csv_path: "../../APPROACH1-TEMPLATE/test_sequences (1).csv"
+  max_seq_len: 256
+  val_fraction: 0.1
+
+# --- Training ---
+training:
+  epochs: 30                # Fewer than BASIC (warm-started, converges faster)
+  batch_size: 4
+  learning_rate: 0.00005    # 5e-5 (lower than BASIC since warm-started)
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  use_fp16: true
+  num_workers: 2
+  seed: 42
+  loss_weights:
+    distance_mse: 1.0
+    bond_constraint: 0.1
+    clash_penalty: 0.05
+  save_dir: "./checkpoints"
+  save_every: 5
+
+# --- Prediction ---
+prediction:
+  num_predictions: 5
+  noise_scale: 0.5
+  refine_steps_range: [50, 75, 100, 125, 150]
+
+# --- Warm Start ---
+warm_start:
+  basic_checkpoint: "../BASIC/checkpoints/best_model.pt"
+  # How to handle the first layer size mismatch (64 -> 80):
+  # Copy columns 0-63 from BASIC, random-init columns 64-79
+  strategy: "expand_first_layer"
