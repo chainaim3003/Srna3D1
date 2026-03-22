@@ -4,33 +4,58 @@
 # ADV1 = BASIC + template features from Approach 1
 # Difference from BASIC: pair_dim is 80 (64 pairwise + 16 template)
 # ============================================================
+# PATH REFERENCE (from HY-BAS-ADV1 directory):
+#   ../           = APPROACH2-RIBBOZANET/
+#   ../../        = TRY1/
+#   ../../../     = Srna3D1/
+#   ../../../..   = STANFORD-RNA/
+# Same depth as BASIC — all BASIC relative paths work here too.
+# ============================================================
+# STATUS: Paths verified 2026-03-22
+#   backbone.repo_path:         NOT FOUND — needs: git clone RibonanzaNet
+#   backbone.weights_path:      NOT FOUND — needs: download from Kaggle
+#   data.train_pickle_path:     NOT FOUND — needs: verify location
+#   data.test_csv_path:         VERIFIED OK
+#   template.local_result_txt:  VERIFIED OK
+#   template.local_submission:  VERIFIED OK (filename corrected)
+#   warm_start.basic_checkpoint: VERIFIED OK
+# ============================================================
 
 # --- Backbone (UNCHANGED from BASIC) ---
 backbone:
   source: "official"
-  repo_path: "../../../../RibonanzaNet"
-  weights_path: "../../../../ribonanza-weights/RibonanzaNet.pt"
+
+  # NEEDS: git clone https://github.com/Shujun-He/RibonanzaNet
+  # into Srna3D1/RibonanzaNet/
+  # OR update this path to wherever the repo actually is
+  repo_path: "../../../RibonanzaNet"
+
+  # NEEDS: Download RibonanzaNet.pt from
+  # https://www.kaggle.com/datasets/shujun717/ribonanzanet-weights
+  # into Srna3D1/ribonanza-weights/
+  # OR update this path to wherever the weights actually are
+  weights_path: "../../../ribonanza-weights/RibonanzaNet.pt"
+
   ntoken: 5
   ninp: 256
-  pairwise_dimension: 64    # RibonanzaNet outputs 64 pairwise features
+  pairwise_dimension: 64
   freeze: true
 
 # --- Template Encoder (NEW in ADV1) ---
 template:
-  template_dim: 16          # Template features per pair
-  num_bins: 22              # Distance bins for template encoding
-  max_dist: 40.0            # Max distance in Angstroms for binning
+  template_dim: 16
+  num_bins: 22
+  max_dist: 40.0
 
-  # For local training/testing: path to Approach 1 outputs
-  local_submission_csv: "../../APPROACH1-TEMPLATE/mine/kalai/run1/submission_kalai.csv"
+  # VERIFIED: These files exist
+  local_submission_csv: "../../APPROACH1-TEMPLATE/mine/kalai/run1/submission_20260321_1100_UTC_kalai.csv.csv"
   local_result_txt: "../../APPROACH1-TEMPLATE/mine/kalai/run1/Result_20260321_1100_UTC_kalai.txt.txt"
 
-  # For Kaggle: directory where MMseqs2 outputs are written
   kaggle_template_dir: "/kaggle/working/templates"
 
-# --- Distance Head (MODIFIED: pair_dim changes from 64 to 80) ---
+# --- Distance Head (MODIFIED: pair_dim 64 -> 80) ---
 distance_head:
-  pair_dim: 80              # 64 (backbone pairwise) + 16 (template) = 80
+  pair_dim: 80
   hidden_dim: 128
   num_layers: 3
   dropout: 0.1
@@ -42,19 +67,23 @@ reconstruction:
   refine_lr: 0.01
   target_consecutive_dist: 5.9
 
-# --- Data (UNCHANGED from BASIC) ---
+# --- Data ---
 data:
-  train_pickle_path: "../../../../stanford3d-pickle/pdb_xyz_data.pkl"
+  # NEEDS: Verify this pickle file exists at Srna3D1/stanford3d-pickle/
+  # If not, check if it was generated during BASIC training
+  train_pickle_path: "../../../stanford3d-pickle/pdb_xyz_data.pkl"
   cif_dir: null
+
+  # VERIFIED: This file exists
   test_csv_path: "../../APPROACH1-TEMPLATE/test_sequences (1).csv"
   max_seq_len: 256
   val_fraction: 0.1
 
 # --- Training ---
 training:
-  epochs: 30                # Fewer than BASIC (warm-started, converges faster)
+  epochs: 30
   batch_size: 4
-  learning_rate: 0.00005    # 5e-5 (lower than BASIC since warm-started)
+  learning_rate: 0.00005
   weight_decay: 0.01
   gradient_clip: 1.0
   use_fp16: true
@@ -75,7 +104,6 @@ prediction:
 
 # --- Warm Start ---
 warm_start:
+  # VERIFIED: This file exists (312KB)
   basic_checkpoint: "../BASIC/checkpoints/best_model.pt"
-  # How to handle the first layer size mismatch (64 -> 80):
-  # Copy columns 0-63 from BASIC, random-init columns 64-79
   strategy: "expand_first_layer"
