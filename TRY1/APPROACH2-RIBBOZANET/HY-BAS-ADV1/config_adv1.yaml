@@ -4,38 +4,16 @@
 # ADV1 = BASIC + template features from Approach 1
 # Difference from BASIC: pair_dim is 80 (64 pairwise + 16 template)
 # ============================================================
-# PATH REFERENCE (from HY-BAS-ADV1 directory):
-#   ../           = APPROACH2-RIBBOZANET/
-#   ../../        = TRY1/
-#   ../../../     = Srna3D1/
-#   ../../../..   = STANFORD-RNA/
-# Same depth as BASIC — all BASIC relative paths work here too.
-# ============================================================
-# STATUS: Paths verified 2026-03-22
-#   backbone.repo_path:         NOT FOUND — needs: git clone RibonanzaNet
-#   backbone.weights_path:      NOT FOUND — needs: download from Kaggle
-#   data.train_pickle_path:     NOT FOUND — needs: verify location
-#   data.test_csv_path:         VERIFIED OK
-#   template.local_result_txt:  VERIFIED OK
-#   template.local_submission:  VERIFIED OK (filename corrected)
-#   warm_start.basic_checkpoint: VERIFIED OK
+# ALL PATHS VERIFIED 2026-03-22
+# Template source: Fork 2 (jaejohn, scored 0.287 on Kaggle)
+# E-values: Kalai Result.txt (identical search results across all runs)
 # ============================================================
 
 # --- Backbone (UNCHANGED from BASIC) ---
 backbone:
   source: "official"
-
-  # NEEDS: git clone https://github.com/Shujun-He/RibonanzaNet
-  # into Srna3D1/RibonanzaNet/
-  # OR update this path to wherever the repo actually is
-  repo_path: "../../../RibonanzaNet"
-
-  # NEEDS: Download RibonanzaNet.pt from
-  # https://www.kaggle.com/datasets/shujun717/ribonanzanet-weights
-  # into Srna3D1/ribonanza-weights/
-  # OR update this path to wherever the weights actually are
-  weights_path: "../../../ribonanza-weights/RibonanzaNet.pt"
-
+  repo_path: "../../../RibonanzaNet"                         # VERIFIED: has Network.py
+  weights_path: "../../../ribonanza-weights/RibonanzaNet.pt"  # VERIFIED: 43.3 MB
   ntoken: 5
   ninp: 256
   pairwise_dimension: 64
@@ -47,8 +25,13 @@ template:
   num_bins: 22
   max_dist: 40.0
 
-  # VERIFIED: These files exist
-  local_submission_csv: "../../APPROACH1-TEMPLATE/mine/kalai/run1/submission_20260321_1100_UTC_kalai.csv.csv"
+  # Fork 2 (jaejohn) templates — scored 0.287 TM on Kaggle
+  # Better than Kalai (~0.15-0.20) due to jaejohn's superior
+  # template ranking, gap-filling, and diversity strategies
+  local_submission_csv: "../../APPROACH1-TEMPLATE/fork2-JJ/REMOTE/run1/submission-fork2.csv"
+
+  # E-values from Kalai's Result.txt — identical to all other runs
+  # (same MMseqs2 search, same database, same parameters)
   local_result_txt: "../../APPROACH1-TEMPLATE/mine/kalai/run1/Result_20260321_1100_UTC_kalai.txt.txt"
 
   kaggle_template_dir: "/kaggle/working/templates"
@@ -69,17 +52,16 @@ reconstruction:
 
 # --- Data ---
 data:
-  # NEEDS: Verify this pickle file exists at Srna3D1/stanford3d-pickle/
-  # If not, check if it was generated during BASIC training
-  train_pickle_path: "../../../stanford3d-pickle/pdb_xyz_data.pkl"
+  train_pickle_path: "../../../stanford3d-pickle/pdb_xyz_data.pkl"  # VERIFIED: 52.3 MB
   cif_dir: null
-
-  # VERIFIED: This file exists
-  test_csv_path: "../../APPROACH1-TEMPLATE/test_sequences (1).csv"
+  test_csv_path: "../../APPROACH1-TEMPLATE/test_sequences (1).csv"  # VERIFIED
   max_seq_len: 256
   val_fraction: 0.1
 
 # --- Training ---
+# NOTE: Training uses SELF-TEMPLATES (true coords of each training example),
+# NOT the submission CSV. The template CSV is only used during inference.
+# So training quality is independent of which submission CSV is configured.
 training:
   epochs: 30
   batch_size: 4
@@ -104,6 +86,5 @@ prediction:
 
 # --- Warm Start ---
 warm_start:
-  # VERIFIED: This file exists (312KB)
-  basic_checkpoint: "../BASIC/checkpoints/best_model.pt"
+  basic_checkpoint: "../BASIC/checkpoints/best_model.pt"  # VERIFIED: 312 KB
   strategy: "expand_first_layer"
