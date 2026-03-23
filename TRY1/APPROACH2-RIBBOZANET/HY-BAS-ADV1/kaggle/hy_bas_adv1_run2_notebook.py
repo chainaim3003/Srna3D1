@@ -36,6 +36,11 @@
 # This works with Internet OFF (no PyPI needed).
 import subprocess, sys, glob
 
+import shutil
+
+py_ver = f"cp{sys.version_info.major}{sys.version_info.minor}"
+print(f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} (wheel tag: {py_ver})")
+
 try:
     import Bio
     print(f"Biopython {Bio.__version__} already installed")
@@ -43,11 +48,22 @@ except ImportError:
     # Find wheel files in attached datasets
     wheels = sorted(glob.glob('/kaggle/input/**/biopython*.whl', recursive=True))
     print(f"Found wheels: {wheels}")
-    if wheels:
+
+    # Copy wheels to /kaggle/working/ with clean names
+    # (Kaggle sometimes adds ' (1)' to filenames, which pip rejects)
+    clean_wheels = []
+    for whl in wheels:
+        basename = os.path.basename(whl)
+        clean_name = basename.replace(' (1)', '').replace(' (2)', '').replace(' (3)', '')
+        dest = f'/kaggle/working/{clean_name}'
+        if not os.path.exists(dest):
+            shutil.copy2(whl, dest)
+        clean_wheels.append(dest)
+
+    if clean_wheels:
         # Pick the wheel matching our Python version
-        py_ver = f"cp{sys.version_info.major}{sys.version_info.minor}"
-        matching = [w for w in wheels if py_ver in w]
-        chosen = matching[0] if matching else wheels[0]
+        matching = [w for w in clean_wheels if py_ver in w]
+        chosen = matching[0] if matching else clean_wheels[-1]
         print(f"Installing: {chosen}")
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', chosen, '-q'])
     else:
@@ -142,8 +158,8 @@ print(f"Train: {len(train_seqs)}, Test: {len(test_seqs)}")
 # ============================================================
 # CELL 5: Load extended data (rna_cif_to_csv)
 # ============================================================
-train_seqs_v2 = pd.read_csv('/kaggle/input/rna-cif-to-csv/rna_sequences.csv')
-train_labels_v2 = pd.read_csv('/kaggle/input/rna-cif-to-csv/rna_coordinates.csv')
+train_seqs_v2 = pd.read_csv('/kaggle/input/datasets/tarunsathyab/rna-cif-to-csv/rna_sequences.csv')
+train_labels_v2 = pd.read_csv('/kaggle/input/datasets/tarunsathyab/rna-cif-to-csv/rna_coordinates.csv')
 print(f"Extended seqs: {len(train_seqs_v2)}, Extended labels: {len(train_labels_v2)}")
 
 
