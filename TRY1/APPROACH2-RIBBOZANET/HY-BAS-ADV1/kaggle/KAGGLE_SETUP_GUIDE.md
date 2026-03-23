@@ -2,7 +2,7 @@
 
 ## The Notebook File
 ```
-kaggle/hy_bas_adv1_notebook.py
+kaggle/hy_bas_adv1_run1_notebook.py
 ```
 
 This is a single Python file containing ALL cells for the Kaggle notebook.
@@ -69,7 +69,7 @@ In right sidebar -> "Input" -> "+ Add Input":
 
 ## Step 5: Paste Cells
 
-Open `kaggle/hy_bas_adv1_notebook.py` in Notepad.
+Open `kaggle/hy_bas_adv1_run1_notebook.py` in Notepad.
 
 The file has 15 cells, each marked with:
 ```
