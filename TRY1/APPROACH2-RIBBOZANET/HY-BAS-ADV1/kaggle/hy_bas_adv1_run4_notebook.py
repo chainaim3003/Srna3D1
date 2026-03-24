@@ -165,8 +165,9 @@ for root, dirs, files in os.walk("/kaggle/input"):
             BACKBONE_WEIGHTS = os.path.join(root, f)
         if f == "best_model.pt":
             ADV1_WEIGHTS = os.path.join(root, f)
-        # --- RUN 4 NEW: look for Run 3 checkpoint ---
-        if f == "adv1_best_model.pt":
+        # --- RUN 4 NEW: look for Run 3 OptB checkpoint (uniquely named) ---
+        # Handles filename with/without space before .pt (Kaggle download quirk)
+        if f.strip() == "adv1_best_run3optb_model.pt":
             RUN3_CHECKPOINT = os.path.join(root, f)
 print(f"Backbone weights: {BACKBONE_WEIGHTS}")
 print(f"BASIC distance head: {ADV1_WEIGHTS}")
