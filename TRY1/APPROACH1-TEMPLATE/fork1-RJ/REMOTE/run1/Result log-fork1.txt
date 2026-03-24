@@ -1,0 +1,18 @@
+
+
+Stanford RNA 3D Folding Part 2 Fork1 - Results Log
+
+
+Date: 2026-03-22 
+
+Notebook : MMseqs2 3D RNA - Version 2
+
+Approach : Fork1 rhijudas TBM
+
+Score : 0.177
+
+Status : Submitted
+
+TIME TAKEN to get score(31m) 
+
+LEADERBOARD: 1875/2256
