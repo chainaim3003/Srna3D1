@@ -32,13 +32,20 @@
 #                 Pre-computes MSA for training sequences
 #     - Cell 14:  Inference concatenates MSA features (64+16+8=88)
 #
+# FIXES FROM RUN 3 OptB v2 (baked into Cell 14):
+#   Fix 1: Always put raw template in Slot 1 for ALL targets
+#   Fix 2: Reduce NN refinement steps from 100 to 30
+#   Fix 3: Lower HYBRID_THRESHOLD from 0.3 to 0.20
+#   (Run 3 OptB scored 0.251 because weak-template targets had
+#    no raw template in any slot. These fixes address that.)
+#
 # PRESERVED FROM RUN 3 Option B:
-#   Change 1: TRAIN_EPOCHS = 30
+#   Change 1: TRAIN_EPOCHS = 50 (increased from 30 for MSA learning)
 #   Change 2: Unfreeze backbone layers 7,8 + discriminative LR
 #   Change 3: Biopython offline wheel install
 #   Change 4: Fixed pickle parsing
-#   Change 5: Hybrid inference (template slots + NN slots)
-#   Change 6: Template-seeded refinement (NN starts from template)
+#   Change 5: Hybrid inference (modified by Fix 1-3)
+#   Change 6: Template-seeded refinement (modified by Fix 2)
 #
 # THE 8 MSA CHANNELS (what the neural network sees):
 #   1. Covariation (i,j): Do positions i and j mutate together?
@@ -76,39 +83,45 @@ MSA_DIM = 8       # Number of MSA feature channels (do not change)
 
 
 # ============================================================
-# CELL 1: Install biopython (offline wheel install)
+# CELL 1: Install biopython (direct sys.path injection)
 # ============================================================
-import subprocess, sys, glob, os
-import shutil
+# Uses sys.path injection instead of pip install.
+# Kaggle auto-extracts .whl files, so Bio/ folder already exists
+# inside the extracted wheel directories. We find Bio/__init__.py
+# and add its parent to sys.path. This works regardless of Python
+# version (no cp310/cp312 mismatch issues) and needs no Internet.
+# This is the same method used in the successful Run 3 OptB commit.
+# ============================================================
+import sys, os, glob
 
 py_ver = f"cp{sys.version_info.major}{sys.version_info.minor}"
-print(f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} (wheel tag: {py_ver})")
+print(f"Python {sys.version_info.major}.{sys.version_info.minor} (tag: {py_ver})")
 
 try:
     import Bio
     print(f"Biopython {Bio.__version__} already installed")
 except ImportError:
-    wheels = sorted(glob.glob('/kaggle/input/**/biopython*.whl', recursive=True))
-    print(f"Found wheels: {wheels}")
-    clean_wheels = []
-    for whl in wheels:
-        basename = os.path.basename(whl)
-        clean_name = basename.replace(' (1)', '').replace(' (2)', '').replace(' (3)', '')
-        dest = f'{OUTPUT_DIR}/{clean_name}'
-        if not os.path.exists(dest):
-            shutil.copy2(whl, dest)
-        clean_wheels.append(dest)
+    # Kaggle fully extracts .whl files — Bio/ folder already exists
+    # Find Bio/__init__.py inside the extracted wheel directories
+    bio_inits = glob.glob('/kaggle/input/**/Bio/__init__.py', recursive=True)
+    print(f"Found Bio dirs: {bio_inits}")
 
-    if clean_wheels:
-        matching = [w for w in clean_wheels if py_ver in w]
-        chosen = matching[0] if matching else clean_wheels[-1]
-        print(f"Installing: {chosen}")
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', chosen, '-q'])
+    # Prefer the one matching our Python version
+    matching = [p for p in bio_inits if py_ver in p]
+    chosen = matching[0] if matching else (bio_inits[0] if bio_inits else None)
+
+    if chosen:
+        # Add the folder containing Bio/ to sys.path
+        bio_parent = os.path.dirname(os.path.dirname(chosen))
+        print(f"Adding to sys.path: {bio_parent}")
+        sys.path.insert(0, bio_parent)
     else:
-        print("No wheel found, trying pip install...")
+        print("Bio/ not found, trying pip...")
+        import subprocess
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'biopython', '-q'])
+
     import Bio
-    print(f"Biopython {Bio.__version__} installed successfully")
+    print(f"Biopython {Bio.__version__} available")
 
 
 # ============================================================
@@ -136,7 +149,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {device}")
 if device.type == 'cuda':
     print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+    print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
 
 # ============================================================
@@ -167,7 +180,7 @@ for root, dirs, files in os.walk("/kaggle/input"):
             ADV1_WEIGHTS = os.path.join(root, f)
         # --- RUN 4 NEW: look for Run 3 OptB checkpoint (uniquely named) ---
         # Handles filename with/without space before .pt (Kaggle download quirk)
-        if f.strip() == "adv1_best_run3optb_model.pt":
+        if f.strip() in ("adv1_best_run3optb_model.pt",):
             RUN3_CHECKPOINT = os.path.join(root, f)
 print(f"Backbone weights: {BACKBONE_WEIGHTS}")
 print(f"BASIC distance head: {ADV1_WEIGHTS}")
@@ -980,7 +993,7 @@ print("\n" + "="*60)
 print("PHASE 3: ADV1 Training (with MSA features)")
 print("="*60)
 
-TRAIN_EPOCHS = 30
+TRAIN_EPOCHS = 50              # Increased from 30: MSA channels need more epochs to integrate
 BATCH_SIZE = 2
 MAX_SEQ_LEN = 256
 HEAD_LR = 5e-5
@@ -1236,30 +1249,46 @@ print("Loaded best checkpoint for inference")
 
 
 # ============================================================
-# CELL 14: ADV1 Inference — Hybrid + Template-Seeded + MSA (CHANGED)
+# CELL 14: ADV1 Inference — Hybrid + Template-Seeded + MSA + Fix 1-3
 # ============================================================
-# RUN 4 CHANGE: MSA features are now included in the distance
-# prediction. The concatenation is backbone(64) + template(16)
-# + msa(8) = 88, matching the training pair_dim.
+# RUN 4 CHANGE: MSA features included in distance prediction.
+# Concatenation: backbone(64) + template(16) + msa(8) = 88.
 #
 # MSA features come from Cell 9.5 (pre-computed for each test target
 # from the 20 similar sequences found in Cell 9).
 #
-# Everything else (hybrid slots, template-seeded refinement,
-# diversity settings) is identical to Run 3 OptB.
+# === FIX 1 (CRITICAL): Raw template ALWAYS in Slot 1 ===
+#   For ALL targets regardless of confidence. Guarantees at least
+#   Fork 2 quality in one slot. Root cause fix for 0.251 < 0.287.
+#
+# === FIX 2: Reduce refinement steps 100 -> 30 ===
+#   Less gradient descent = less drift from good template coords.
+#   Operates on NN slots only, NOT on Slot 1 (raw template).
+#
+# === FIX 3: Lower HYBRID_THRESHOLD 0.3 -> 0.20 ===
+#   More targets get 2 template slots instead of 1.
+#
+# Slot assignment:
+#   conf > 0.20:  Slot 1 raw template, Slot 2 template+noise, Slots 3-5 NN+MSA
+#   conf <= 0.20: Slot 1 raw template (FIX 1), Slots 2-5 NN+MSA
+#   conf = 0:     All 5 slots MDS fallback (0/28 targets)
 # ============================================================
 print("\n" + "="*60)
 print("PHASE 4: ADV1 Inference (Hybrid + Template-Seeded + MSA)")
 print("="*60)
 
 MAX_INFER_LEN = 512
-HYBRID_THRESHOLD = 0.3
+# === FIX 3: Lowered from 0.3 to 0.20 ===
+# More targets get 2 template slots (1-2) instead of just 1
+HYBRID_THRESHOLD = 0.20    # was 0.3 in Run 3 OptB
 
 all_predictions = []
 infer_start = time.time()
 
-n_hybrid_template = 0
-n_hybrid_nn_only = 0
+# Updated counters to track Fix 1's three-branch logic
+n_hybrid_template_2slot = 0   # Targets with conf > threshold (2 template slots)
+n_hybrid_template_1slot = 0   # Targets with conf <= threshold but > 0 (1 template slot via Fix 1)
+n_no_template = 0             # Targets with conf = 0 (no template at all)
 n_template_seeded = 0
 n_mds_fallback = 0
 
@@ -1317,12 +1346,14 @@ for idx, row in test_seqs.iterrows():
         padded[:len(full_tmpl)] = full_tmpl
         full_tmpl = padded
 
+    # === FIX 2: Reduced steps from 100 to 30 (less drift from template) ===
+    # Noise levels kept from Run 4 design (higher than Run 3 for diversity)
     nn_diversity = [
-        {'noise': 0.0, 'steps': 100, 'seed': 0},
-        {'noise': 0.5, 'steps': 100, 'seed': 1},   # RUN 4 TWEAK: increased from 0.3
-        {'noise': 1.0, 'steps': 100, 'seed': 2},   # RUN 4 TWEAK: increased from 0.5
-        {'noise': 1.5, 'steps': 150, 'seed': 3},   # RUN 4 TWEAK: increased from 0.7
-        {'noise': 0.0, 'steps': 50, 'seed': 4},
+        {'noise': 0.0, 'steps': 30, 'seed': 0},    # was 100 — FIX 2
+        {'noise': 0.5, 'steps': 30, 'seed': 1},    # was 100 — FIX 2 (noise from Run 4)
+        {'noise': 1.0, 'steps': 30, 'seed': 2},    # was 100 — FIX 2 (noise from Run 4)
+        {'noise': 1.5, 'steps': 50, 'seed': 3},    # was 150 — FIX 2 (noise from Run 4)
+        {'noise': 0.0, 'steps': 15, 'seed': 4},    # was 50  — FIX 2
     ]
 
     nn_coords_list = []
@@ -1361,27 +1392,61 @@ for idx, row in test_seqs.iterrows():
 
         nn_coords_list.append(coords_np)
 
+    # --- STEP 3: Assemble 5 slots (with Fix 1-3 from Run 3 OptB v2) ---
     coords_list = []
 
     if tmpl_conf > HYBRID_THRESHOLD:
-        n_hybrid_template += 1
+        # HIGH confidence (> 0.20): Slots 1-2 template, Slots 3-5 NN+MSA
+        n_hybrid_template_2slot += 1
+
+        # Slot 1: Raw template (constraint-refined) — guaranteed Fork 2 quality
         tmpl_refined = adaptive_rna_constraints(full_tmpl.copy(), sequence, confidence=tmpl_conf)
         coords_list.append(tmpl_refined)
+
+        # Slot 2: Template + small noise for diversity
         np.random.seed(42)
         small_noise = np.random.normal(0, 0.5, full_tmpl.shape)
         tmpl_noisy = adaptive_rna_constraints(full_tmpl + small_noise, sequence, confidence=tmpl_conf)
         coords_list.append(tmpl_noisy)
+
+        # Slots 3-5: NN+MSA predictions (template-seeded, 30 steps)
         coords_list.append(nn_coords_list[0])
         coords_list.append(nn_coords_list[1])
         coords_list.append(nn_coords_list[2])
+
         if idx % 5 == 0:
             print(f"    HYBRID: conf={tmpl_conf:.3f} > {HYBRID_THRESHOLD} -> slots 1-2 template, 3-5 NN+MSA")
-    else:
-        n_hybrid_nn_only += 1
-        coords_list = nn_coords_list[:5]
+
+    elif tmpl_conf > 0.01:
+        # === FIX 1 (CRITICAL): Weak template — but Slot 1 is STILL raw template ===
+        # In Run 3 OptB, this branch put ALL 5 slots as NN-refined.
+        # That was the root cause of 0.251 < 0.287.
+        # NOW: Slot 1 = raw template (safety net), Slots 2-5 = NN+MSA.
+        # Best-of-5 means the raw template carries if NN is worse.
+        n_hybrid_template_1slot += 1
+
+        # Slot 1: Raw template — ALWAYS present regardless of confidence
+        # This is exactly what Fork 2 does. Guaranteed baseline quality.
+        tmpl_refined = adaptive_rna_constraints(full_tmpl.copy(), sequence, confidence=tmpl_conf)
+        coords_list.append(tmpl_refined)
+
+        # Slots 2-5: NN+MSA predictions (template-seeded, 30 steps via Fix 2)
+        coords_list.append(nn_coords_list[0])
+        coords_list.append(nn_coords_list[1])
+        coords_list.append(nn_coords_list[2])
+        coords_list.append(nn_coords_list[3])
+
         if idx % 5 == 0:
-            seed_type = "template-seeded" if tmpl_conf > 0.01 else "MDS fallback"
-            print(f"    HYBRID: conf={tmpl_conf:.3f} <= {HYBRID_THRESHOLD} -> all 5 slots NN+MSA ({seed_type})")
+            print(f"    FIX1: conf={tmpl_conf:.3f} <= {HYBRID_THRESHOLD} -> slot 1 RAW TEMPLATE, 2-5 NN+MSA")
+
+    else:
+        # No template at all (conf = 0): all 5 slots MDS fallback
+        # In practice, 0/28 test targets hit this branch.
+        n_no_template += 1
+        coords_list = nn_coords_list[:5]
+
+        if idx % 5 == 0:
+            print(f"    NO TEMPLATE: conf={tmpl_conf:.3f} -> all 5 slots MDS fallback")
 
     for j in range(len(sequence)):
         pred_row = {
@@ -1396,8 +1461,9 @@ for idx, row in test_seqs.iterrows():
         all_predictions.append(pred_row)
 
 print(f"\nInference complete. {len(all_predictions)} rows in {time.time()-infer_start:.0f}s")
-print(f"  Targets with template slots (1-2): {n_hybrid_template}")
-print(f"  Targets with all-NN slots: {n_hybrid_nn_only}")
+print(f"  Targets with 2 template slots (conf > {HYBRID_THRESHOLD}): {n_hybrid_template_2slot}")
+print(f"  Targets with 1 template slot (FIX 1, conf <= {HYBRID_THRESHOLD}): {n_hybrid_template_1slot}")
+print(f"  Targets with no template (MDS fallback): {n_no_template}")
 print(f"  NN slots using template-seeded refinement: {n_template_seeded}")
 print(f"  NN slots using MDS fallback: {n_mds_fallback}")
 
