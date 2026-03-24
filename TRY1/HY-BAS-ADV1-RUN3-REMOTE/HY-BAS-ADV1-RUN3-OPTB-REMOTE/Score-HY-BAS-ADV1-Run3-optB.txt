@@ -1,0 +1,10 @@
+HY-BAS-ADV1-Run3-optB
+
+Public Score
+0.251
+
+Best Score
+0.251 V5
+
+Runtime
+38m 48s · GPU T4 x2
